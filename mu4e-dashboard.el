@@ -1,11 +1,11 @@
 ;;; mu4e-dashboard.el --- Mu4e dashboard -*- lexical-binding: t -*-
 
-;; Copyright (C) 2020 Nicolas P. Rougier
+;; Copyright (C) 2020-2021 Nicolas P. Rougier, Alex Bennee, Michael Herstine
 
 ;; Author: Nicolas P. Rougier <Nicolas.Rougier@inria.fr>
 ;; Homepage: https://github.com/rougier/mu4e-dashboard
 ;; Keywords: convenience
-;; Version: 0.1
+;; Version: 0.1.1
 
 ;; Package-Requires: ((emacs "26.1"))
 
@@ -33,7 +33,12 @@
 
 (require 'subr-x)
 (require 'ob-shell)
+(require 'org)
+(require 'mu4e-headers)
 
+;;; Code:
+
+(defconst mu4e-dashboard-version "0.1.1")
 
 ;; Timer handler
 ;; (defvar mu4e-dashboard--timer nil)
@@ -51,6 +56,11 @@
   :group 'mu4e-dashboard
   :type 'string)
 
+(defcustom mu4e-dashboard-mu-program "mu"
+  "Default name of the mu command."
+  :group 'mu4e-dashboard
+  :type 'string)
+
 (org-link-set-parameters
  mu4e-dashboard-link-name
  :follow #'mu4e-dashboard-follow-mu4e-link)
@@ -64,11 +74,12 @@
 
 
 (defun mu4e-dashboard-follow-mu4e-link (path)
-  "Process a mu4e link of the form [[mu4e:query|fmt|limit][(---------)]].
+  "Process a mu4e link with path PATH.
 
+PATH shall be of the form [[mu4e:query|fmt|limit][(---------)]].
 If FMT is not specified or is nil, clicking on the link calls
 mu4e with the specified QUERY (with or without the given
-LIMIT). If FMT is specified, the description of the link is
+LIMIT).  If FMT is specified, the description of the link is
 updated with the QUERY count formatted using the provided
 format (for example \"%4d\")."
   
@@ -96,7 +107,7 @@ format (for example \"%4d\")."
 
 A formatted link is a link of the form
 [[mu4e:query|limit|fmt][(---------)]] where fmt is a non nil
-string describing the format. When a link is cleared, the
+string describing the format.  When a link is cleared, the
 description is replaced by a string for the form \"(---)\" and
 have the same size as the current description. If the given
 format is too big for the current description, description is
@@ -105,13 +116,11 @@ replaced with + signs."
   (let* ((path  (org-element-property :path link))
          (query (string-trim (nth 0 (split-string path "|"))))
          (fmt   (nth 1 (split-string path "|")))
-         (count (nth 2 (split-string path "|")))
          (beg   (org-element-property :contents-begin link))
          (end   (org-element-property :contents-end link))
-         (size  (- end beg))
-         )
+         (size  (- end beg)))
     (if (and fmt (> (length fmt) 0))
-        (let* ((command (format "mu find %s 2> /dev/null | wc -l" query))
+        (let* ((command (format "%s find %s 2> /dev/null | wc -l" mu4e-dashboard-mu-program query))
                (output (string-to-number (shell-command-to-string command)))
                (output  (format fmt output)))
           (with-current-buffer mu4e-dashboard--buffer
@@ -125,8 +134,10 @@ replaced with + signs."
               (set-buffer-modified-p modified)))))))
 
 
-(defun async-shell-command-to-string (command callback)
-  " Run a shell command in an asynchronous way. Once the call
+(defun mu4e-dashboard--async-shell-command-to-string (command callback)
+  "Run COMMAND asynchronously; call CALLBACK on completion.
+
+Run a shell command in an asynchronous way.  Once the call
 terminates, callback is called with the result."
   
   (let* ((display-buffer-alist (list (cons "\\*Async Shell Command\\*.*"
@@ -137,7 +148,7 @@ terminates, callback is called with the result."
                  (get-buffer-process output-buffer))))
     (if (process-live-p proc)
         (set-process-sentinel proc
-                              (lambda (process signal)
+                              (lambda (process _signal)
                                 (when (memq (process-status process) '(exit signal))
                                   (with-current-buffer output-buffer
                                     (funcall callback (buffer-string)))
@@ -170,8 +181,8 @@ have the same size as the current description."
                 ;; proceed with no output, we signal an error.
                 (if (eq size 0)
                     (error "The link ``%s'' has a format clause, but no output width" path))
-                (let ((command (format "mu find %s 2> /dev/null | wc -l" query)))
-                  (async-shell-command-to-string command
+                (let ((command (format "%s find %s 2> /dev/null | wc -l" mu4e-dashboard-mu-program query)))
+                  (mu4e-dashboard--async-shell-command-to-string command
                       (lambda (output)
                         (with-current-buffer buffer
                           (let ((modified (buffer-modified-p))
@@ -190,7 +201,7 @@ have the same size as the current description."
 
 A formatted link is a link of the form
 [[mu4e:query|limit|fmt][(---------)]] where fmt is a non nil
-string describing the format. When a link is cleared, the
+string describing the format.  When a link is cleared, the
 description is replaced by a string for the form \"(---)\" and
 have the same size as the current description."
 
@@ -204,13 +215,13 @@ have the same size as the current description."
 
 
 (defun mu4e-dashboard-clear-link (link)
-  "Clear a formatted mu4e link.
+  "Clear a formatted mu4e link LINK.
 
 A formatted link is a link of the form
 [[mu4e:query|limit|fmt][(---------)]] where fmt is a non nil
-string describing the format. When a link is cleared, the
+string describing the format.  When a link is cleared, the
 description is replaced by a string for the form \"(---)\" and
-have the same size as the current description."
+having the same size as the current description."
   
   (let* ((path (org-element-property :path link))
          (fmt  (nth 1 (split-string path "|")))
@@ -232,7 +243,7 @@ have the same size as the current description."
 
 A formatted link is a link of the form
 [[mu4e:query|limit|fmt][(---------)]] where fmt is a non nil
-string describing the format. When a link is cleared, the
+string describing the format.  When a link is cleared, the
 description is replaced by a string for the form \"(---)\" and
 have the same size as the current description."
   
@@ -245,29 +256,23 @@ have the same size as the current description."
 
 ;;;###autoload
 (defun mu4e-dashboard-activate ()
-  "Activate the dashboard by installing keybindings and starting
-the automatic update"
+  "Activate the current buffer as a dashboard.
+
+Install keybindings and start the automatic update."
   (interactive)
   (setq mu4e-dashboard--buffer (current-buffer))
   (setq buffer-read-only t)
-;;  (if mu4e-dashboard--timer
-;;      (cancel-timer mu4e-dashboard--timer))
-  (setq mu4e-dashboard--timer nil)
   (mu4e-dashboard-mode t)
   (mu4e-dashboard-parse-keymap)
   (add-hook 'mu4e-index-updated-hook
-            'mu4e-dashboard-update)
+            #'mu4e-dashboard-update)
   (mu4e-dashboard-update)
   (message (concat "["
                    (propertize "mu4e dashboard" 'face 'bold)
-                   "] Activated"))
-;;  (setq mu4e-dashboard--timer
-;;        ;;  (run-at-time nil mu4e-update-interval 'mu4e-dashboard-update)))
-;;        (run-with-idle-timer mu4e-update-interval t 'mu4e-dashboard-update))
-  )
+                   "] Activated")))
 
 (defun mu4e-dashboard-quit ()
-  "Quit the dashboard"
+  "Quit the dashboard in the current buffer."
   (interactive)
   (with-current-buffer mu4e-dashboard--buffer
 ;;    (if mu4e-dashboard--timer
@@ -276,7 +281,7 @@ the automatic update"
     (kill-current-buffer)))
 
 (defun mu4e-dashboard-update ()
-  "Update mu4e index and dashboard"
+  "Update the current dashboard."
   (interactive)
   (with-current-buffer mu4e-dashboard--buffer
     (message (concat
@@ -293,8 +298,9 @@ the automatic update"
     (mu4e-dashboard-update-all-async)))
 
 (defun mu4e-dashboard-deactivate ()
-  "Deactivate the dashboard by uninstalling keybindings and
-stopping the automatic update"
+  "Deactivate the current dashboard.
+
+This will uninstall keybindings and stop the automatic update."
   (interactive)
   (setq buffer-read-only nil)
 ;;  (if mu4e-dashboard--timer
@@ -302,7 +308,7 @@ stopping the automatic update"
 ;;  (setq mu4e-dashboard--timer nil)
   (mu4e-dashboard-mode 0)
   (remove-hook 'mu4e-index-updated-hook
-            'mu4e-dashboard-update)
+            #'mu4e-dashboard-update)
   (message (concat
             "["
             (propertize "mu4e dashboard" 'face 'bold)
@@ -319,14 +325,16 @@ stopping the automatic update"
       (mu4e-dashboard-activate))))
 
 (defun mu4e-dashboard-parse-keymap ()
-  "Parse an org file for keywords of type KEYMAP:VALUE and
-install the corresponding key bindings in the mu4e-dashboard
-minor mode keymap. Previous keymap (if any) is erased.
+  "Parse an org file for keybindings.
 
-VALUE is composed of \"keybinding | function-call\" with keybidning
-begin a string describing a key sequence and a call to an existing
-function. For example, to have 'q' to kill the current buffer, the
- syntax would be:
+Keybindings are defined by keywords of type KEYMAP:VALUE and
+install the corresponding key bindings in the mu4e-dashboard
+minor mode keymap.  The previous keymap (if any) is erased.
+
+VALUE is composed of \"keybinding | function-call\" with
+keybidning begin a string describing a key sequence and a call to
+an existing function. For example, to have 'q' to kill the
+current buffer, the syntax would be:
 
 #+KEYMAP: q | kill-current-buffer
 
