@@ -17,7 +17,7 @@
 (ert-deftest smoke-tests ()
   "Simple mu4e-dashboard test."
   (find-file (format "%s/test/trivial-dash.org" (getenv "srcdir")))
-  (mu4e-dashboard-activate)
+  (mu4e-dashboard-mode)
 
   (while (< (buffer-chars-modified-tick) 8)
     (sit-for 1)
@@ -27,9 +27,9 @@
    (string-equal
     (buffer-string)
     "
-* Mailboxes                 *[[mu4e:flag:unread|%2d][17]]*
+* Mailboxes                 *[[mu:flag:unread|%2d][17]]*
 
-[[mu4e:flag:unread][Unread]] /[[mu4e:flag:unread|(%3d)][( 17)]]/ .... [u]  [[mu4e:date:today..now][Today]] /[[mu4e:date:today..now|(%3d)][(113)]]/ .......... [t]  *Compose* ...... [C]
+[[mu:flag:unread][Unread]] /[[mu:flag:unread|(%3d)][( 17)]]/ .... [u]  [[mu:date:today..now][Today]] /[[mu:date:today..now|(%3d)][(113)]]/ .......... [t]  *Compose* ...... [C]
 
 #+KEYMAP: u | mu4e-headers-search \"flag:unread\"
 #+KEYMAP: t | mu4e-headers-search \"date:today..now\"
@@ -39,4 +39,4 @@
   (should
    (string-match-p
     (regexp-quote "mu4e-compose-new")
-    (prin1-to-string (lookup-key mu4e-dashboard-mode-map "C")))))
+    (prin1-to-string (lookup-key (current-local-map) "C")))))

@@ -1,11 +1,11 @@
 ;;; mu4e-dashboard.el --- Mu4e dashboard -*- lexical-binding: t -*-
 
-;; Copyright (C) 2020-2021 Nicolas P. Rougier, Alex Bennee, Michael Herstine
+;; Copyright (C) 2020-2021 Nicolas P. Rougier
 
 ;; Author: Nicolas P. Rougier <Nicolas.Rougier@inria.fr>
 ;; Homepage: https://github.com/rougier/mu4e-dashboard
 ;; Keywords: convenience
-;; Version: 0.1.1
+;; Version: 0.1
 
 ;; Package-Requires: ((emacs "26.1"))
 
@@ -38,39 +38,57 @@
 
 ;;; Code:
 
-(defconst mu4e-dashboard-version "0.1.1")
+(defconst mu4e-dashboard-version "0.1")
 
 ;; Timer handler
 ;; (defvar mu4e-dashboard--timer nil)
-
-;; Dashboard buffer
-(defvar mu4e-dashboard--buffer nil)
 
 ;; Install the mu4e link type
 (defgroup mu4e-dashboard nil
   "Provides a new Org mode link type for mu4e queries."
   :group 'comm)
 
-(defcustom mu4e-dashboard-link-name "mu4e"
+(defcustom mu4e-dashboard-link-name "mu"
   "Default link name."
-  :group 'mu4e-dashboard
   :type 'string)
 
 (defcustom mu4e-dashboard-mu-program "mu"
   "Default name of the mu command."
-  :group 'mu4e-dashboard
+  :type 'string)
+
+(defcustom mu4e-dashboard-lighter " mu4ed"
+  "Minor mode lighter indicating that this mode is active."
   :type 'string)
 
 (org-link-set-parameters
  mu4e-dashboard-link-name
  :follow #'mu4e-dashboard-follow-mu4e-link)
 
-;; Minor mode to simulate buffer local keybindings.
+(defvar mu4e-dashboard--prev-local-keymap nil
+  "Buffer-local variable to save the prior keymap.")
+
+(make-variable-buffer-local 'mu4e-dashboard--prev-local-keymap)
+
 ;;;###autoload
 (define-minor-mode mu4e-dashboard-mode
-  "Minor mode to simulate buffer local keybindings."
-  :keymap (make-sparse-keymap)
-  :init-value nil)
+  "Minor mode for \"live\" mu4e dashboards."
+  :lighter mu4e-dashboard-lighter
+  :init-value nil
+  (if mu4e-dashboard-mode
+      (progn
+        (setq buffer-read-only t)
+        ;; Make a copy of the current local keymap (this will, in
+        ;; general, have been setup by org-mode, but I don't want to
+        ;; assume that)
+        (setq mu4e-dashboard--prev-local-keymap (current-local-map))
+        (use-local-map (copy-keymap (current-local-map)))
+        (mu4e-dashboard-parse-keymap)
+        (add-hook 'mu4e-index-updated-hook #'mu4e-dashboard-update)
+        (mu4e-dashboard-update))
+    ;; TODO(sp1ff): what if there's an async update in-progress?
+    (remove-hook 'mu4e-index-updated-hook #'mu4e-dashboard-update)
+    (use-local-map mu4e-dashboard--prev-local-keymap)
+    (setq buffer-read-only nil)))
 
 
 (defun mu4e-dashboard-follow-mu4e-link (path)
@@ -123,15 +141,14 @@ replaced with + signs."
         (let* ((command (format "%s find %s 2> /dev/null | wc -l" mu4e-dashboard-mu-program query))
                (output (string-to-number (shell-command-to-string command)))
                (output  (format fmt output)))
-          (with-current-buffer mu4e-dashboard--buffer
-            (let ((modified (buffer-modified-p))
-                  (inhibit-read-only t))
-              (save-excursion
-                (delete-region beg end)
-                (goto-char beg)
-                (insert (if (<= (length output) size) output
-                          (make-string size ?+))))
-              (set-buffer-modified-p modified)))))))
+          (let ((modified (buffer-modified-p))
+                (inhibit-read-only t))
+            (save-excursion
+              (delete-region beg end)
+              (goto-char beg)
+              (insert (if (<= (length output) size) output
+                        (make-string size ?+))))
+            (set-buffer-modified-p modified))))))
 
 
 (defun mu4e-dashboard--async-shell-command-to-string (command callback)
@@ -229,14 +246,13 @@ having the same size as the current description."
          (end  (org-element-property :contents-end link))
          (size (- end beg)))
     (if (and fmt (> (length fmt) 0))
-        (with-current-buffer mu4e-dashboard--buffer
-          (let ((modified (buffer-modified-p))
-                (inhibit-read-only t))
-            (save-excursion
-              (delete-region beg end)
-              (goto-char beg)
-              (insert (format "(%s)" (make-string (- size 2) ?-))))
-            (set-buffer-modified-p modified))))))
+        (let ((modified (buffer-modified-p))
+              (inhibit-read-only t))
+          (save-excursion
+            (delete-region beg end)
+            (goto-char beg)
+            (insert (format "(%s)" (make-string (- size 2) ?-))))
+          (set-buffer-modified-p modified)))))
 
 (defun mu4e-dashboard-clear-all ()
   "Clear all formatted mu4e links.
@@ -254,75 +270,13 @@ have the same size as the current description."
   (redisplay t))
 
 
-;;;###autoload
-(defun mu4e-dashboard-activate ()
-  "Activate the current buffer as a dashboard.
-
-Install keybindings and start the automatic update."
-  (interactive)
-  (setq mu4e-dashboard--buffer (current-buffer))
-  (setq buffer-read-only t)
-  (mu4e-dashboard-mode t)
-  (mu4e-dashboard-parse-keymap)
-  (add-hook 'mu4e-index-updated-hook
-            #'mu4e-dashboard-update)
-  (mu4e-dashboard-update)
-  (message (concat "["
-                   (propertize "mu4e dashboard" 'face 'bold)
-                   "] Activated")))
-
-(defun mu4e-dashboard-quit ()
-  "Quit the dashboard in the current buffer."
-  (interactive)
-  (with-current-buffer mu4e-dashboard--buffer
-;;    (if mu4e-dashboard--timer
-;;        (cancel-timer mu4e-dashboard--timer))
-;;    (setq mu4e-dashboard--timer nil)
-    (kill-current-buffer)))
-
 (defun mu4e-dashboard-update ()
   "Update the current dashboard."
   (interactive)
-  (with-current-buffer mu4e-dashboard--buffer
-    (message (concat
-              "["
-              (propertize "mu4e dashboard" 'face 'bold)
-              "] "
-              (format-time-string "Update (%H:%M)")))
-    ;; (mu4e-update-mail-and-index t)
-;;    (with-current-buffer mu4e-dashboard--buffer
-;;      (let ((modified (buffer-modified-p))
-;;            (inhibit-read-only t))
-;;        (save-excursion (org-babel-execute-buffer))
-;;        (set-buffer-modified-p modified)))
-    (mu4e-dashboard-update-all-async)))
-
-(defun mu4e-dashboard-deactivate ()
-  "Deactivate the current dashboard.
-
-This will uninstall keybindings and stop the automatic update."
-  (interactive)
-  (setq buffer-read-only nil)
-;;  (if mu4e-dashboard--timer
-;;      (cancel-timer mu4e-dashboard--timer))
-;;  (setq mu4e-dashboard--timer nil)
-  (mu4e-dashboard-mode 0)
-  (remove-hook 'mu4e-index-updated-hook
-            #'mu4e-dashboard-update)
-  (message (concat
-            "["
-            (propertize "mu4e dashboard" 'face 'bold)
-            "] Deactivated")))
-
-;;;###autoload
-(defun mu4e-dashboard-toggle ()
-  "Toggle mu4e-dashboard mode on and off."
-  (interactive)
-  (when (and (eq major-mode 'org-mode)
-             (boundp mu4e-dashboard-mode))
-    (if mu4e-dashboard-mode
-        (mu4e-dashboard-deactivate)
-      (mu4e-dashboard-activate))))
+  (message
+   (concat "[" (propertize "mu4e dashboard" 'face 'bold) "] "
+           (format-time-string "Update (%H:%M)")))
+  (mu4e-dashboard-update-all-async))
 
 (defun mu4e-dashboard-parse-keymap ()
   "Parse an org file for keybindings.
@@ -341,20 +295,20 @@ current buffer, the syntax would be:
 This can be placed anywhere in the org file even though I advised
 to group keymaps at the same place."
 
-  (define-key mu4e-dashboard-mode-map (kbd "return") 'org-open-at-point)
-  
+  (local-set-key (kbd "<return>") #'org-open-at-point)
+
   (org-element-map (org-element-parse-buffer) 'keyword
     (lambda (keyword)
       (when (string= (org-element-property :key keyword) "KEYMAP")
         (let* ((value (org-element-property :value keyword))
                (key   (string-trim (nth 0 (split-string value "|"))))
                (call  (string-trim (nth 1 (split-string value "|")))))
-          (define-key mu4e-dashboard-mode-map (kbd key)
-            (eval (car (read-from-string
-                        (format "(lambda () (interactive) (%s))" call)))))
-;;          (message (format "mu4e-dashboard: binding %s to %s"
-;;                          key (format "(lambda () (interactive) (%s))" call)))
-          )))))
+          (local-set-key
+           (kbd key)
+           (eval (car (read-from-string
+                       (format "(lambda () (interactive) (%s))" call)))))
+          (message (format "mu4e-dashboard: binding %s to %s"
+                           key (format "(lambda () (interactive) (%s))" call))))))))
 
 (provide 'mu4e-dashboard)
 ;;; mu4e-dashboard.el ends here
