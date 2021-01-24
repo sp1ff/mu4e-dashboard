@@ -1,11 +1,11 @@
-;;; mu4e-dashboard.el --- Mu4e dashboard -*- lexical-binding: t -*-
+;;; mu4e-dashboard.el --- Dashboards for mu4e   -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2020-2021 Nicolas P. Rougier
 
 ;; Author: Nicolas P. Rougier <Nicolas.Rougier@inria.fr>
 ;; Homepage: https://github.com/rougier/mu4e-dashboard
 ;; Keywords: convenience
-;; Version: 0.1
+;; Version: 0.1.1
 
 ;; Package-Requires: ((emacs "26.1"))
 
@@ -22,7 +22,7 @@
 ;; GNU General Public License for more details.
 
 ;; For a full copy of the GNU General Public License
-;; see <http://www.gnu.org/licenses/>.
+;; see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
 ;;
@@ -38,10 +38,7 @@
 
 ;;; Code:
 
-(defconst mu4e-dashboard-version "0.1")
-
-;; Timer handler
-;; (defvar mu4e-dashboard--timer nil)
+(defconst mu4e-dashboard-version "0.1.1")
 
 ;; Install the mu4e link type
 (defgroup mu4e-dashboard nil
@@ -69,6 +66,14 @@
 
 (make-variable-buffer-local 'mu4e-dashboard--prev-local-keymap)
 
+(defvar mu4e-dashboard--async-update-in-progress nil
+  "Set tot if an async update is in progress.
+
+This is a buffer-local variable that will be t if the current
+buffer is in the process of being updated asynchronously.")
+
+(make-variable-buffer-local 'mu4e-dashboard--async-update-in-progress)
+
 ;;;###autoload
 (define-minor-mode mu4e-dashboard-mode
   "Minor mode for \"live\" mu4e dashboards."
@@ -85,11 +90,11 @@
         (mu4e-dashboard-parse-keymap)
         (add-hook 'mu4e-index-updated-hook #'mu4e-dashboard-update)
         (mu4e-dashboard-update))
-    ;; TODO(sp1ff): what if there's an async update in-progress?
+    (if mu4e-dashboard--async-update-in-progress
+        (user-error "Update in progress; try again when it is complete"))
     (remove-hook 'mu4e-index-updated-hook #'mu4e-dashboard-update)
     (use-local-map mu4e-dashboard--prev-local-keymap)
     (setq buffer-read-only nil)))
-
 
 (defun mu4e-dashboard-follow-mu4e-link (path)
   "Process a mu4e link with path PATH.
@@ -118,7 +123,6 @@ format (for example \"%4d\")."
      ;; Query count and link description update
      ((and fmt (> (length fmt) 0))
        (mu4e-dashboard-update-link link)))))
-
 
 (defun mu4e-dashboard-update-link (link)
   "Update content of a formatted mu4e LINK.
@@ -150,7 +154,6 @@ replaced with + signs."
                         (make-string size ?+))))
             (set-buffer-modified-p modified))))))
 
-
 (defun mu4e-dashboard--async-shell-command-to-string (command callback)
   "Run COMMAND asynchronously; call CALLBACK on completion.
 
@@ -172,7 +175,6 @@ terminates, callback is called with the result."
                                   (kill-buffer output-buffer))))
       (message "No process running."))))
 
-
 (defun mu4e-dashboard-update-all-async ()
   "Update content of all formatted mu4e links in an asynchronous way.
 
@@ -181,7 +183,10 @@ A formatted link is a link of the form
 string describing the format.  When a link is cleared, the
 description is replaced by a string for the form \"(---)\" and
 have the same size as the current description."
-  
+
+  (if mu4e-dashboard--async-update-in-progress
+      (user-error "Cannot update while an update is in progress!"))
+  (setq mu4e-dashboard--async-update-in-progress t)
   (let ((buffer (current-buffer)))
     (org-element-map (org-element-parse-buffer) 'link
       (lambda (link)
@@ -210,8 +215,8 @@ have the same size as the current description."
                               (goto-char beg)
                               (insert (if (<= (length output) size) output
                                         (make-string size ?+))))
-                            (set-buffer-modified-p modified)))))))))))))
-                            
+                            (set-buffer-modified-p modified))))))))))))
+  (setq mu4e-dashboard--async-update-in-progress nil))
 
 (defun mu4e-dashboard-upate-all-sync ()
   "Update content of all mu4e formatted links in a synchronous way.
@@ -228,8 +233,6 @@ have the same size as the current description."
       (when (string= (org-element-property :type link) mu4e-dashboard-link-name)
         (mu4e-dashboard-update-link link)
         (redisplay t)))))
-
-
 
 (defun mu4e-dashboard-clear-link (link)
   "Clear a formatted mu4e link LINK.
@@ -269,7 +272,6 @@ have the same size as the current description."
         (mu4e-dashboard-clear-link link))))
   (redisplay t))
 
-
 (defun mu4e-dashboard-update ()
   "Update the current dashboard."
   (interactive)
@@ -307,8 +309,11 @@ to group keymaps at the same place."
            (kbd key)
            (eval (car (read-from-string
                        (format "(lambda () (interactive) (%s))" call)))))
-          (message (format "mu4e-dashboard: binding %s to %s"
-                           key (format "(lambda () (interactive) (%s))" call))))))))
+          (message
+           "mu4e-dashboard: binding %s to %s"
+           key
+           (format "(lambda () (interactive) (%s))" call)))))))
 
 (provide 'mu4e-dashboard)
+
 ;;; mu4e-dashboard.el ends here
